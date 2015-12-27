@@ -1,0 +1,109 @@
+---
+title: "Predicting Weight Lifting Performance"
+author: "Andareiro"
+date: "December 26, 2015"
+output: html_document
+---
+
+
+
+```{r echo=F, message=F, warning=F}
+# Load necessary packages
+library(dplyr)
+library(caret)
+library(ggplot2)
+``` 
+
+# Data Preparation
+After importing the data sets, we:
+
+1. Remove variables with only zero values or NA values
+2. Further subset the data sets to exclude the consolidated "new window" entries
+3. Remove the associated summary statistic variables generated for the "new window"
+```{r }
+# set factor-type variables
+wColClass <- rep("factor", times = 3)
+names(wColClass) <- c("user_name", "new_window", "classe")
+# import data, specify NA values and factor variables
+wTrain <- read.csv(
+  "./data/pml-training.csv", stringsAsFactors = F,
+  row.names = 1,na.strings = c("", "#DIV/0!", "NA"),
+  colClasses = wColClass)
+wTest <- read.csv(
+  "./data/pml-testing.csv", stringsAsFactors = F,
+  row.names = 1,na.strings = c("", "#DIV/0!", "NA"),
+  colClasses = wColClass)
+
+# We have some columns that are only NA values, and some that are only 0 values,
+# remove these
+emptyCol <-
+  c("kurtosis_yaw_belt", "skewness_yaw_belt", "amplitude_yaw_belt", "kurtosis_yaw_dumbbell", "skewness_yaw_dumbbell", "amplitude_yaw_dumbbell", "kurtosis_yaw_forearm","skewness_yaw_forearm", "amplitude_yaw_forearm")
+wTrain <- select(wTrain,-one_of(emptyCol))
+wTest <- select(wTest,-one_of(emptyCol))
+rm(list=c("emptyCol", "wColClass"))
+## Encode timestamp
+wTrain$cvtd_timestamp <- strptime(wTrain$cvtd_timestamp, "%d/%m/%Y %H:%M")
+wTest$cvtd_timestamp <- strptime(wTest$cvtd_timestamp, "%d/%m/%Y %H:%M")
+## Remove "New Window" entries and associated summary statistic columns
+wTrain <- wTrain[wTrain$new_window == "no",-(1:6)]
+# Identify and remove NA-only columns
+naColumn <- is.na(wTrain)
+naColumn <- apply(naColumn, 2,sum)
+naColumn <- naColumn[naColumn < 100]
+naColumn <- names(naColumn)
+wTrain <- select(wTrain, one_of(naColumn))
+wTrain <- wTrain[,names(wTrain) %in% naColumn]
+wTest <- wTest[,names(wTest) %in% naColumn]
+rm(naColumn)
+```
+
+# Model Development
+
+## Description of Variables
+
+## Sample Selection
+We used the provided 19,216-line training set, and evaluated our model with the provided 20-line test set.
+
+Having subset our sample data, we built a preliminary classification and regression tree, using the `caret` and `rpart` packages for R. 
+
+## Variable Selection
+
+We compared the accuracy with and without Principal Component Analysis pre-processing. We found that using a cutoff complexity parameter of 0.03, we achieved a higher accuracy without PCA (0.52) than with PCA (0.37).
+
+### With PCA Pre-Processing
+```{r}
+wModPCA <- train(classe ~., method = "rpart", data= wTrain, preProcess="pca")
+wModPCA
+```
+
+### Without PCA Pre-Processing
+Without pre-processing, we estimated an out-of-sample error of 1-0.52, or 48%, the accuracy of the best-fit model below:
+```{r}
+wMod <- train(classe ~., method = "rpart", data= wTrain)
+wMod
+```
+
+## Cross Validation and Final Variable Selection
+We selected the default settings for the `rpart` package, using the bootstrap method with a _K_ of 25.
+
+To minimize overfitting we examined the complexity parameter table of our model, and selected a cutoff of cp=0.035:
+```{r}
+wMod$finalModel$cptable
+```
+We then pruned the tree to produce the final model.
+```{r}
+finalMod <- prune(wMod$finalModel, cp = 0.035)
+```
+
+```{r echo = F}
+fancyRpartPlot(finalMod, cex = 0.6)
+```
+
+## Expected vs. Estimated Error
+
+As described above, we estimated an out-of-sample error of 48%. We generated a confusion matrix, and calculated the in-sample accuracy of the model by comparing predicted with actual values.
+```{r}
+predClass <- predict(wMod, wTrain)
+confusionMatrix(predClass, wTrain$classe)
+``` 
+
